@@ -1,3 +1,5 @@
+use std::io::{BufRead, BufReader, Error, Read};
+
 use sha2::{Digest, Sha256};
 
 pub fn hash(data: &[u8]) -> u64 {
@@ -20,14 +22,17 @@ struct MerkleNode {
 }
 
 impl MerkleTree {
-    pub fn new(data: &[u8]) -> Self {
-        let n = data.len();
-        let n_leaves = n;
-        let mut leaves = Vec::with_capacity(n_leaves);
+    pub fn new(data: &mut BufReader<&[u8]>, leaf_size: usize) -> Result<Self, Error> {
+        let mut leaves = Vec::new();
 
-        for block in data.chunks(n / n_leaves) {
+        let mut block = vec![0u8; leaf_size];
+        while let mut block_len = data.read(&mut block)? && block_len != 0 {
+            while block_len < leaf_size {
+                let res = data.read(&mut block[block_len..])?;
+                block_len += res;
+            }
             let leaf = MerkleNode {
-                hash: hash(block),
+                hash: hash(&block),
                 left: None,
                 right: None,
             };
@@ -64,9 +69,7 @@ impl MerkleTree {
                 parents = Vec::new();
             }
         }
-        Self {
-            root: parents[0].clone(),
-        }
+        Ok(Self { root: parents[0].clone() })
     }
 
     pub fn contains(&self, data: &[u8]) -> bool {
