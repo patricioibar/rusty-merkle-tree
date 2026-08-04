@@ -1,4 +1,4 @@
-use std::io::{BufReader, Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind, Read};
 
 use sha2::{Digest, Sha256};
 
@@ -23,7 +23,7 @@ struct MerkleNode {
 }
 
 impl MerkleTree {
-    pub fn new(data: &mut BufReader<&[u8]>, leaf_size: usize) -> Result<Self, Error> {
+    pub fn new(mut data: impl Read, leaf_size: usize) -> Result<Self, Error> {
         let mut leaves = Vec::new();
 
         loop {
@@ -83,7 +83,7 @@ impl MerkleTree {
         })
     }
 
-    pub fn append(mut self, data: &mut BufReader<&[u8]>) -> Result<Self, Error> {
+    pub fn append(mut self, mut data: impl Read) -> Result<Self, Error> {
         let leaf_size = self.leaf_size;
         loop {
             let mut block = vec![0u8; leaf_size];
@@ -115,7 +115,7 @@ impl MerkleTree {
         let mut parents = vec![];
         let mut actual = self.root;
 
-        for i in 0..depth {
+        for _i in 0..depth {
             let next = if let Some(node) = actual.right.take() {
                 Ok(node)
             } else {
