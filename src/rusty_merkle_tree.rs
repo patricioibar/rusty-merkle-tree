@@ -25,16 +25,17 @@ impl MerkleTree {
     pub fn new(data: &mut BufReader<&[u8]>, leaf_size: usize) -> Result<Self, Error> {
         let mut leaves = Vec::new();
 
-        let mut block = vec![0u8; leaf_size];
-        while let mut block_len = data.read(&mut block)?
-            && block_len != 0
-        {
+        loop {
+            let mut block = vec![0u8; leaf_size];
+            let mut block_len = data.read(&mut block)?;
+            if block_len == 0 { break; }
             while block_len < leaf_size {
                 let res = data.read(&mut block[block_len..])?;
+                if res == 0 { break; }
                 block_len += res;
             }
             let leaf = MerkleNode {
-                hash: hash(&block),
+                hash: hash(&block[0..block_len]),
                 left: None,
                 right: None,
             };
@@ -172,6 +173,19 @@ mod tests {
         assert!(!tree.contains(&[0x01, 0x02]));
         assert!(!tree.contains(&[0x02, 0x03, 0x04, 0x05]));
         assert!(!tree.contains(&[0x08]));
+        Ok(())
+    }
+
+        #[test]
+    fn test_tree_leaf_size_data_len_is_not_a_multiple_of_size() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 4)?;
+
+        assert!(tree.contains(&[0x01, 0x02, 0x03, 0x04]));
+        assert!(tree.contains(&[0x05, 0x06, 0x07, 0x08]));
+        assert!(tree.contains(&[0x09, 0x0A]));
+        assert!(!tree.contains(&[0x09, 0x0A, 0x0B, 0x0C]));
         Ok(())
     }
 }
