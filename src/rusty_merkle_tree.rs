@@ -12,7 +12,7 @@ pub fn hash(data: &[u8]) -> u64 {
 #[derive(Debug)]
 pub struct MerkleTree {
     leaf_size: usize,
-    root: Box<MerkleNode>,
+    root: MerkleNode,
 }
 
 #[derive(Clone, Debug)]
@@ -22,87 +22,73 @@ struct MerkleNode {
     right: Option<Box<MerkleNode>>,
 }
 
-impl MerkleTree {
-    pub fn new(mut data: impl Read, leaf_size: usize) -> Result<Self, Error> {
-        let mut leaves = Vec::new();
-
-        loop {
-            let mut block = vec![0u8; leaf_size];
-            let mut block_len = data.read(&mut block)?;
-            if block_len == 0 {
-                break;
-            }
-            while block_len < leaf_size {
-                let res = data.read(&mut block[block_len..])?;
-                if res == 0 {
-                    break;
-                }
-                block_len += res;
-            }
-            let leaf = MerkleNode {
-                hash: hash(&block[0..block_len]),
-                left: None,
-                right: None,
-            };
-            leaves.push(Box::new(leaf));
+impl MerkleNode {
+    pub fn new_inner_node(left: MerkleNode, right: Option<MerkleNode>) -> MerkleNode {
+        let left_hash = left.hash;
+        let right_hash = if let Some(right_node) = &right {
+            right_node.hash
+        } else {
+            left_hash
+        };
+        MerkleNode {
+            hash: hash(&[left_hash.to_le_bytes(), right_hash.to_le_bytes()].concat()),
+            left: Some(Box::new(left)),
+            right: right.map(Box::new),
         }
-
-        let mut finalized = false;
-        let mut parents = Vec::new();
-        while !finalized {
-            for couple in leaves.chunks_mut(2) {
-                let left_hash = couple[0].hash;
-                let right_hash = if couple.len() > 1 {
-                    couple[1].hash
-                } else {
-                    left_hash
-                };
-                let parent_hash =
-                    hash(&[left_hash.to_le_bytes(), right_hash.to_le_bytes()].concat());
-                let parent_node = MerkleNode {
-                    hash: parent_hash,
-                    left: Some(Box::new(*couple[0].clone())),
-                    right: if left_hash == right_hash {
-                        None
-                    } else {
-                        Some(Box::new(*couple[1].clone()))
-                    },
-                };
-                parents.push(Box::new(parent_node));
-            }
-            if parents.len() == 1 {
-                finalized = true;
-            } else {
-                leaves = parents;
-                parents = Vec::new();
-            }
-        }
-        Ok(Self {
-            root: parents[0].clone(),
-            leaf_size,
-        })
     }
 
-    pub fn append(mut self, mut data: impl Read) -> Result<Self, Error> {
-        let leaf_size = self.leaf_size;
-        loop {
-            let mut block = vec![0u8; leaf_size];
-            let mut block_len = data.read(&mut block)?;
-            if block_len == 0 {
-                break;
+    pub fn new_leaf(hash: u64) -> MerkleNode {
+        MerkleNode {
+            hash,
+            left: None,
+            right: None,
+        }
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        self.left.is_none() && self.right.is_none()
+    }
+}
+
+impl MerkleTree {
+    pub fn new(data: impl Read, leaf_size: usize) -> Result<Self, Error> {
+        if leaf_size == 0 {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "leaf size must be greater than 0",
+            ));
+        }
+
+        let mut descendants = get_leaves(data, leaf_size)?;
+
+        if descendants.is_empty() {
+            return Err(Error::new(ErrorKind::InvalidInput, "tree cannot be empty"));
+        }
+
+        while descendants.len() > 1 {
+            let mut parents = Vec::new();
+            let mut children = descendants.into_iter();
+
+            // create one parent node for every two children nodes
+            while let Some(left) = children.next() {
+                let right = children.next();
+                parents.push(MerkleNode::new_inner_node(left, right));
             }
-            while block_len < leaf_size {
-                let res = data.read(&mut block[block_len..])?;
-                if res == 0 {
-                    break;
-                }
-                block_len += res;
-            }
-            let leaf = MerkleNode {
-                hash: hash(&block[0..block_len]),
-                left: None,
-                right: None,
-            };
+
+            // continue pairing parents until we reach the root
+            descendants = parents;
+        }
+
+        let root = descendants
+            .pop()
+            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "tree cannot be empty"))?;
+
+        Ok(Self { root, leaf_size })
+    }
+
+    pub fn append(mut self, data: impl Read) -> Result<Self, Error> {
+        let leaves = get_leaves(data, self.leaf_size)?;
+        for leaf in leaves {
             self = self.add_one_leaf(leaf)?;
         }
         Ok(self)
@@ -111,17 +97,18 @@ impl MerkleTree {
     fn add_one_leaf(mut self, leaf: MerkleNode) -> Result<Self, Error> {
         let depth = self.depth();
 
-        // walk down tree, collecting every node that need to be updated
+        // walk down tree, collecting every node that may need to be updated
         let mut parents = vec![];
-        let mut actual = self.root;
+        let mut actual = Box::new(self.root);
 
-        for _i in 0..depth {
+        for _ in 0..depth {
             let next = if let Some(node) = actual.right.take() {
                 Ok(node)
             } else {
                 if let Some(node) = actual.left.take() {
                     Ok(node)
                 } else {
+                    // all leaves should be in the same depth
                     Err(Error::new(ErrorKind::InvalidInput, "invalid tree"))
                 }
             }?;
@@ -129,10 +116,10 @@ impl MerkleTree {
             actual = next;
         }
 
-        // insert new leaf and create a new branch if needed
+        // insert the new leaf and create a new branch if needed
         // also update corresponding hashes
-        let mut prev_node = actual;
-        let mut new_branch = Some(leaf);
+        let mut prev_node = actual; // pre-existing leaf node, the one that is furthest to the right
+        let mut new_branch = Some(leaf); // highest node of the new branch
         while let Some(mut node) = parents.pop() {
             // reconstruct node by adding previous node
             if node.left.is_none() {
@@ -142,63 +129,41 @@ impl MerkleTree {
             };
 
             match (&node.right, new_branch.take()) {
-                (None, Some(leaf)) => {
+                (None, Some(top_of_new_branch)) => {
                     // add new node to right side and recompute hash
-                    let left_hash = if let Some(left_node) = &node.left {
-                        Ok(left_node.hash)
-                    } else {
-                        Err(Error::other("logic failure"))
-                    }?;
-                    let leaf_hash = leaf.hash;
-                    let new_hash =
-                        hash(&[left_hash.to_le_bytes(), leaf_hash.to_le_bytes()].concat());
-                    node.hash = new_hash;
-                    node.right = Some(Box::new(leaf));
+                    let updated_node = MerkleNode::new_inner_node(
+                        *node.left.take().unwrap(),
+                        Some(top_of_new_branch),
+                    );
+                    node = Box::new(updated_node);
+                    // new branch has been merged, no need to keep it for the next iteration
                     new_branch = None;
                 }
-                (Some(_), Some(leaf)) => {
-                    // extend new node's branch
-                    let leaf_hash = leaf.hash;
-                    let new_node = MerkleNode {
-                        hash: hash(&[leaf_hash.to_le_bytes(), leaf_hash.to_le_bytes()].concat()),
-                        left: Some(Box::new(leaf)),
-                        right: None,
-                    };
-                    new_branch = Some(new_node);
+                (Some(_), Some(top_of_new_branch)) => {
+                    // as new branch can't be merged yet, it has to be extended one level up
+                    new_branch = Some(MerkleNode::new_inner_node(top_of_new_branch, None));
                 }
                 (_, None) => {
-                    let left_hash = if let Some(left_node) = &node.left {
-                        Ok(left_node.hash)
-                    } else {
-                        Err(Error::other("logic failure"))
-                    }?;
-                    let right_hash = if let Some(right_node) = &node.right {
-                        right_node.hash
-                    } else {
-                        left_hash
-                    };
-                    let new_hash =
-                        hash(&[left_hash.to_le_bytes(), right_hash.to_le_bytes()].concat());
-                    node.hash = new_hash;
+                    // new branch already merged, just recompute hash
+                    let updated_node = MerkleNode::new_inner_node(
+                        *node.left.take().unwrap(),    // left child is guaranteed to exist
+                        node.right.take().map(|n| *n), // unbox if exists
+                    );
+                    node = Box::new(updated_node);
                 }
             }
+            // this node will be included in it's parent in the next iteration
             prev_node = node;
         }
 
         let prev_root = prev_node;
-        if let Some(leaf) = new_branch {
+        if let Some(top_of_new_branch) = new_branch {
             // new branch didn't merge yet -- tree was complete before this append
             // merge new branch with previous root and update new root.
-            let left_hash = prev_root.hash;
-            let right_hash = leaf.hash;
-            let new_node = MerkleNode {
-                hash: hash(&[left_hash.to_le_bytes(), right_hash.to_le_bytes()].concat()),
-                left: Some(prev_root),
-                right: Some(Box::new(leaf)),
-            };
-            self.root = Box::new(new_node);
+            let new_node = MerkleNode::new_inner_node(*prev_root, Some(top_of_new_branch));
+            self.root = new_node;
         } else {
-            self.root = prev_root;
+            self.root = *prev_root;
         }
 
         Ok(self)
@@ -224,7 +189,7 @@ impl MerkleTree {
     }
 
     fn contains_hash_recursive(&self, node: &MerkleNode, target_hash: &u64) -> bool {
-        if node.hash == *target_hash {
+        if node.is_leaf() && node.hash == *target_hash {
             return true;
         }
         if let Some(ref left) = node.left
@@ -239,6 +204,27 @@ impl MerkleTree {
         }
         false
     }
+}
+
+fn get_leaves(mut data: impl Read, leaf_size: usize) -> Result<Vec<MerkleNode>, Error> {
+    let mut leaves = Vec::new();
+    loop {
+        let mut block = vec![0u8; leaf_size];
+        let mut block_len = data.read(&mut block)?;
+        if block_len == 0 {
+            break;
+        }
+        while block_len < leaf_size {
+            let res = data.read(&mut block[block_len..])?;
+            if res == 0 {
+                break;
+            }
+            block_len += res;
+        }
+        let leaf = MerkleNode::new_leaf(hash(&block[0..block_len]));
+        leaves.push(leaf);
+    }
+    Ok(leaves)
 }
 
 #[cfg(test)]
