@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Error, Read};
+use std::io::{BufReader, Error, Read};
 
 use sha2::{Digest, Sha256};
 
@@ -26,7 +26,9 @@ impl MerkleTree {
         let mut leaves = Vec::new();
 
         let mut block = vec![0u8; leaf_size];
-        while let mut block_len = data.read(&mut block)? && block_len != 0 {
+        while let mut block_len = data.read(&mut block)?
+            && block_len != 0
+        {
             while block_len < leaf_size {
                 let res = data.read(&mut block[block_len..])?;
                 block_len += res;
@@ -69,7 +71,9 @@ impl MerkleTree {
                 parents = Vec::new();
             }
         }
-        Ok(Self { root: parents[0].clone() })
+        Ok(Self {
+            root: parents[0].clone(),
+        })
     }
 
     pub fn contains(&self, data: &[u8]) -> bool {
@@ -96,5 +100,78 @@ impl MerkleTree {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufReader, Error};
+
+    use super::MerkleTree;
+
+    #[test]
+    fn test_tree_leaf_size_1_contains_element() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 1)?;
+
+        assert!(tree.contains(&[0x01]));
+        assert!(!tree.contains(&[0x07]));
+        assert!(!tree.contains(&[0x01, 0x02]));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_leaf_size_1_contains_element_hash() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 1)?;
+
+        let hash_01 = crate::hash(&[0x01]);
+        let hash_07 = crate::hash(&[0x07]);
+
+        assert!(tree.contains_hash(&hash_01));
+        assert!(!tree.contains_hash(&hash_07));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_leaf_size_4_contains_element() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 4)?;
+
+        assert!(tree.contains(&[0x01, 0x02, 0x03, 0x04]));
+        assert!(tree.contains(&[0x05, 0x06, 0x07, 0x08]));
+        assert!(!tree.contains(&[0x09, 0x0A, 0x0B, 0x0C]));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_leaf_size_4_contains_element_hash() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 4)?;
+
+        let hash_first = crate::hash(&[0x01, 0x02, 0x03, 0x04]);
+        let hash_second = crate::hash(&[0x05, 0x06, 0x07, 0x08]);
+        let hash_invalid = crate::hash(&[0x09, 0x0A, 0x0B, 0x0C]);
+
+        assert!(tree.contains_hash(&hash_first));
+        assert!(tree.contains_hash(&hash_second));
+        assert!(!tree.contains_hash(&hash_invalid));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_leaf_size_4_not_contains_invalid_subarray() -> Result<(), Error> {
+        let data: &[u8] = &vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut reader = BufReader::new(data);
+        let tree = MerkleTree::new(&mut reader, 4)?;
+
+        assert!(!tree.contains(&[0x01, 0x02]));
+        assert!(!tree.contains(&[0x02, 0x03, 0x04, 0x05]));
+        assert!(!tree.contains(&[0x08]));
+        Ok(())
     }
 }
