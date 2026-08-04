@@ -115,7 +115,6 @@ impl MerkleTree {
         let mut parents = vec![];
         let mut actual = self.root;
 
-        println!("walking down tree to depth: {}", depth);
         for i in 0..depth {
             let next = if let Some(node) = actual.right.take() {
                 Ok(node)
@@ -126,7 +125,6 @@ impl MerkleTree {
                     Err(Error::new(ErrorKind::InvalidInput, "invalid tree"))
                 }
             }?;
-            println!("{} - actual: {:#?}", i, actual.hash);
             parents.push(actual);
             actual = next;
         }
@@ -136,10 +134,6 @@ impl MerkleTree {
         let mut prev_node = actual;
         let mut new_branch = Some(leaf);
         while let Some(mut node) = parents.pop() {
-            println!("walking up tree, actual: {:#?}", node);
-            println!("prev: {:#?}", prev_node);
-            println!("new_branch: {:#?}", new_branch.as_ref().map(|n| n.hash));
-
             // reconstruct node by adding previous node
             if node.left.is_none() {
                 node.left = Some(prev_node);
