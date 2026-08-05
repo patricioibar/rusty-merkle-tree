@@ -1,12 +1,10 @@
-use std::io::{Error, ErrorKind, Read};
+use std::{hash::{DefaultHasher, Hash, Hasher}, io::{Error, ErrorKind, Read}};
 
-use sha2::{Digest, Sha256};
 
 pub fn hash(data: &[u8]) -> u64 {
-    Sha256::digest(data)
-        .iter()
-        .take(8)
-        .fold(0u64, |acc, &byte| (acc << 8) | byte as u64)
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug)]
