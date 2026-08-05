@@ -1,3 +1,5 @@
+//! This module implements a simple Merkle tree data structure in Rust.
+
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     io::{Error, ErrorKind, Read},
@@ -9,11 +11,18 @@ pub fn hash(data: &[u8]) -> u64 {
     hasher.finish()
 }
 
+/// Merkle tree data structure that allows for efficient and secure verification of data integrity.
+/// The tree can be built from raw data or from a list of leaves.
+/// The tree can be modified by appending new leaves or raw data, and it supports generating proofs for the presence of specific leaves.
 #[derive(Debug)]
 pub struct MerkleTree {
     root: MerkleNode,
 }
 
+/// Merkle node structure that represents a node in the Merkle tree.
+/// Leaf nodes can be created from raw data or from a hash, to construct or append to a Merkle tree.
+/// Inner nodes are created by combining two child nodes, and their hash is computed from the hashes of the child nodes.
+/// Inner nodes are managed internally by the Merkle tree and should not be created or modified directly by users.
 #[derive(Clone, Debug)]
 pub struct MerkleNode {
     hash: u64,
@@ -36,6 +45,7 @@ impl MerkleNode {
         }
     }
 
+    /// Creates a new leaf node with the given hash.
     pub fn new_leaf(hash: u64) -> MerkleNode {
         MerkleNode {
             hash,
@@ -44,6 +54,8 @@ impl MerkleNode {
         }
     }
 
+    /// Creates a new leaf node from the given data.
+    /// The data is read and hashed to create the leaf node.
     pub fn new_leaf_from_data(data: impl Read) -> Result<Self, Error> {
         let mut buffer = Vec::new();
         let _ = data.take(usize::MAX as u64).read_to_end(&mut buffer)?;
@@ -60,6 +72,10 @@ impl MerkleNode {
 }
 
 impl MerkleTree {
+    /// Creates a new Merkle tree from raw data, reading the data in chunks of the specified leaf size.
+    /// The leaf size must be greater than 0, and the data must not be empty
+    ///
+    /// The tree is constructed by creating leaf nodes from the data and then pairing them to create inner nodes until a single root node is reached.
     pub fn from_raw_data(data: impl Read, leaf_size: usize) -> Result<Self, Error> {
         if leaf_size == 0 {
             return Err(Error::new(
@@ -71,6 +87,10 @@ impl MerkleTree {
         Self::from_leaves(leaves)
     }
 
+    /// Creates a new Merkle tree from a list of leaf nodes.
+    /// The list of leaves must not be empty, and all nodes must be leaves (i.e., they must not have any children).
+    ///
+    /// The tree is constructed by pairing leaf nodes to create inner nodes until a single root node is reached.
     pub fn from_leaves(leaves: Vec<MerkleNode>) -> Result<Self, Error> {
         if leaves.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "tree cannot be empty"));
@@ -108,6 +128,11 @@ impl MerkleTree {
         Ok(Self { root })
     }
 
+    /// Appends raw data to the Merkle tree, reading the data in chunks of the specified leaf size.
+    /// The leaf size must be greater than 0, and the data must not be empty
+    ///
+    /// The new leaves are created from the data and added to the tree, updating the root if necessary.
+    /// The tree is modified in place, and a new Merkle tree is returned with the updated structure.
     pub fn append_raw_data(mut self, data: impl Read, leaf_size: usize) -> Result<Self, Error> {
         let leaves = get_leaves_from_raw_data(data, leaf_size)?;
         for leaf in leaves {
@@ -116,6 +141,11 @@ impl MerkleTree {
         Ok(self)
     }
 
+    /// Appends a list of leaf nodes to the Merkle tree.
+    /// The list of leaves must not be empty, and all nodes must be leaves (i.e., they must not have any children).
+    ///
+    /// The new leaves are added to the tree, updating the root if necessary.
+    /// The tree is modified in place, and a new Merkle tree is returned with the updated structure.
     pub fn append(mut self, leaves: Vec<MerkleNode>) -> Result<Self, Error> {
         for leaf in &leaves {
             if !leaf.is_leaf() {
@@ -216,11 +246,16 @@ impl MerkleTree {
         depth
     }
 
+    /// Checks if the Merkle tree contains a leaf node with the given data.
+    /// The data is hashed and compared to the hashes of the leaf nodes in the tree.
+    /// Returns true if the leaf node is found, false otherwise.
     pub fn contains(&self, data: &[u8]) -> bool {
         let target_hash = hash(data);
         self.contains_hash(&target_hash)
     }
 
+    /// Checks if the Merkle tree contains a leaf node with the given hash.
+    /// Returns true if the leaf node is found, false otherwise.
     pub fn contains_hash(&self, target_hash: &u64) -> bool {
         self.contains_hash_recursive(&self.root, target_hash)
     }
@@ -242,10 +277,14 @@ impl MerkleTree {
         false
     }
 
+    /// Returns the root hash of the Merkle tree.
     pub fn get_root_hash(&self) -> u64 {
         self.root.hash
     }
 
+    /// Generates a Merkle proof for the leaf node at the given index.
+    ///
+    /// The leaf number must be within the bounds of the tree (i.e., less than 2^depth).
     pub fn generate_proof(&self, mut leaf_number: usize) -> Result<MerkleProof, Error> {
         if leaf_number >= 2_u32.pow(self.depth() as u32) as usize {
             return Err(Error::new(
@@ -289,12 +328,18 @@ enum Direction {
     Right,
 }
 
+/// Merkle proof structure that represents a proof of the presence of a leaf node in the Merkle tree.
+/// The proof consists of the hashes of the sibling nodes along the path from the leaf to the root, along with the direction (left or right) of each sibling node.
+/// The proof can be validated by recomputing the hash from the leaf to the root and comparing it to the root hash of the tree.
 #[derive(Debug)]
 pub struct MerkleProof {
     path: Vec<(u64, Direction)>, // could extract (u64, bool) in a struct "SiblingNode"?
 }
 
 impl MerkleProof {
+    /// Validates the Merkle proof against the given root hash and leaf hash.
+    /// The proof is valid if the recomputed hash from the leaf to the root matches the given root hash.
+    /// Returns true if the proof is valid, false otherwise.
     pub fn validate(&self, root_hash: u64, leaf_hash: u64) -> bool {
         let mut actual = leaf_hash;
 
