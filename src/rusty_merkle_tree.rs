@@ -230,6 +230,7 @@ fn get_leaves(mut data: impl Read, leaf_size: usize) -> Result<Vec<MerkleNode>, 
 #[cfg(test)]
 mod tests {
     use std::io::{BufReader, Error};
+    use rand::Rng;
 
     use super::MerkleTree;
 
@@ -381,6 +382,56 @@ mod tests {
         assert!(tree.contains(&[0x09, 0x0A, 0x0B]));
         assert!(tree.contains(&[0x0C]));
         assert!(!tree.contains(&[0x07, 0x08, 0x09]));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_from_larger_data_kb() -> Result<(), Error> {
+        let file_size = 1024 * 100;
+        let mut file_bytes = vec![0u8; file_size];
+        let mut rng: rand::rngs::ThreadRng = rand::rngs::ThreadRng::default();
+        rng.fill_bytes(&mut file_bytes);
+        let mut tree = MerkleTree::new(file_bytes.as_slice(), 512)?;
+
+        assert!(tree.contains(&file_bytes[0..512]));
+        assert!(tree.contains(&file_bytes[2048..2560]));
+        assert!(!tree.contains(&file_bytes[1000..1512]));
+
+        let new_file_size = 1024 * 5 + 123;
+        let mut new_file_bytes = vec![0u8; new_file_size];
+        rng.fill_bytes(&mut new_file_bytes);
+        tree = tree.append(new_file_bytes.as_slice())?;
+
+        assert!(tree.contains(&new_file_bytes[0..512]));
+        assert!(tree.contains(&new_file_bytes[2048..2560]));
+        assert!(!tree.contains(&new_file_bytes[1000..1512]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_from_larger_data_mb() -> Result<(), Error> {
+        let file_size = 1024 * 10000;
+        let mut file_bytes = vec![0u8; file_size];
+        let mut rng: rand::rngs::ThreadRng = rand::rngs::ThreadRng::default();
+        rng.fill_bytes(&mut file_bytes);
+        let mut tree = MerkleTree::new(file_bytes.as_slice(), 512)?;
+
+        assert!(tree.contains(&file_bytes[0..512]));
+        assert!(tree.contains(&file_bytes[2048..2560]));
+        assert!(tree.contains(&file_bytes[20480..20992]));
+        assert!(!tree.contains(&file_bytes[100003..100512]));
+
+        let new_file_size = 1024 * 1000 + 123;
+        let mut new_file_bytes = vec![0u8; new_file_size];
+        rng.fill_bytes(&mut new_file_bytes);
+        tree = tree.append(new_file_bytes.as_slice())?;
+
+        assert!(tree.contains(&new_file_bytes[0..512]));
+        assert!(tree.contains(&new_file_bytes[2048..2560]));
+        assert!(tree.contains(&new_file_bytes[20480..20992]));
+        assert!(!tree.contains(&new_file_bytes[100003..100512]));
+
         Ok(())
     }
 }
