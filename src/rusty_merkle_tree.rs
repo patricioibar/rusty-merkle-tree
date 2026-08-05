@@ -11,12 +11,11 @@ pub fn hash(data: &[u8]) -> u64 {
 
 #[derive(Debug)]
 pub struct MerkleTree {
-    leaf_size: usize,
     root: MerkleNode,
 }
 
 #[derive(Clone, Debug)]
-struct MerkleNode {
+pub struct MerkleNode {
     hash: u64,
     left: Option<Box<MerkleNode>>,
     right: Option<Box<MerkleNode>>,
@@ -37,12 +36,22 @@ impl MerkleNode {
         }
     }
 
-    fn new_leaf(hash: u64) -> MerkleNode {
+    pub fn new_leaf(hash: u64) -> MerkleNode {
         MerkleNode {
             hash,
             left: None,
             right: None,
         }
+    }
+
+    pub fn new_leaf_from_data(data: impl Read) -> Result<Self, Error> {
+        let mut buffer = Vec::new();
+        let _ = data.take(usize::MAX as u64).read_to_end(&mut buffer)?;
+        Ok(MerkleNode {
+            hash: hash(&buffer),
+            left: None,
+            right: None,
+        })
     }
 
     fn is_leaf(&self) -> bool {
@@ -51,19 +60,32 @@ impl MerkleNode {
 }
 
 impl MerkleTree {
-    pub fn new(data: impl Read, leaf_size: usize) -> Result<Self, Error> {
+    pub fn from_raw_data(data: impl Read, leaf_size: usize) -> Result<Self, Error> {
         if leaf_size == 0 {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "leaf size must be greater than 0",
             ));
         }
+        let leaves = get_leaves_from_raw_data(data, leaf_size)?;
+        Self::from_leaves(leaves)
+    }
 
-        let mut descendants = get_leaves(data, leaf_size)?;
-
-        if descendants.is_empty() {
+    pub fn from_leaves(leaves: Vec<MerkleNode>) -> Result<Self, Error> {
+        if leaves.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "tree cannot be empty"));
         }
+
+        for leaf in &leaves {
+            if !leaf.is_leaf() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "all nodes must be leaves",
+                ));
+            }
+        }
+
+        let mut descendants = leaves;
 
         while descendants.len() > 1 {
             let mut parents = Vec::new();
@@ -83,11 +105,26 @@ impl MerkleTree {
             .pop()
             .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "tree cannot be empty"))?;
 
-        Ok(Self { root, leaf_size })
+        Ok(Self { root })
     }
 
-    pub fn append(mut self, data: impl Read) -> Result<Self, Error> {
-        let leaves = get_leaves(data, self.leaf_size)?;
+    pub fn append_raw_data(mut self, data: impl Read, leaf_size: usize) -> Result<Self, Error> {
+        let leaves = get_leaves_from_raw_data(data, leaf_size)?;
+        for leaf in leaves {
+            self = self.add_one_leaf(leaf)?;
+        }
+        Ok(self)
+    }
+
+    pub fn append(mut self, leaves: Vec<MerkleNode>) -> Result<Self, Error> {
+        for leaf in &leaves {
+            if !leaf.is_leaf() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "all nodes must be leaves",
+                ));
+            }
+        }
         for leaf in leaves {
             self = self.add_one_leaf(leaf)?;
         }
@@ -274,7 +311,10 @@ impl MerkleProof {
     }
 }
 
-fn get_leaves(mut data: impl Read, leaf_size: usize) -> Result<Vec<MerkleNode>, Error> {
+fn get_leaves_from_raw_data(
+    mut data: impl Read,
+    leaf_size: usize,
+) -> Result<Vec<MerkleNode>, Error> {
     let mut leaves = Vec::new();
     loop {
         let mut block = vec![0u8; leaf_size];
