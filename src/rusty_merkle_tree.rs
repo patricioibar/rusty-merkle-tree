@@ -77,12 +77,6 @@ impl MerkleTree {
     ///
     /// The tree is constructed by creating leaf nodes from the data and then pairing them to create inner nodes until a single root node is reached.
     pub fn from_raw_data(data: impl Read, leaf_size: usize) -> Result<Self, Error> {
-        if leaf_size == 0 {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "leaf size must be greater than 0",
-            ));
-        }
         let leaves = get_leaves_from_raw_data(data, leaf_size)?;
         Self::from_leaves(leaves)
     }
@@ -360,6 +354,12 @@ fn get_leaves_from_raw_data(
     mut data: impl Read,
     leaf_size: usize,
 ) -> Result<Vec<MerkleNode>, Error> {
+    if leaf_size == 0 {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "leaf size must be greater than 0",
+        ));
+    }
     let mut leaves = Vec::new();
     loop {
         let mut block = vec![0u8; leaf_size];

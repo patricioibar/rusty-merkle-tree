@@ -365,8 +365,8 @@ mod tests {
 
         let real_transaction = transaction_to_bytes(&block[6]);
         let made_up_transaction = transaction_to_bytes(&Transaction {
-            origin: 94870, // you
-            destiny: 109569, // me
+            origin: 94870,       // you
+            destiny: 109569,     // me
             amount: 999999.9999, // all your money
         });
 
