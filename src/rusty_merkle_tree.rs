@@ -202,6 +202,66 @@ impl MerkleTree {
         }
         false
     }
+
+    pub fn get_root_hash(&self) -> u64 {
+        self.root.hash
+    }
+
+    pub fn generate_proof(&self, mut leaf_number: usize) -> Result<MerkleProof, Error> {
+        let mut depth = self.depth();
+        let mut sibling_nodes = vec![];
+        let mut actual_node = &self.root;
+        while depth > 0 {
+            // unwrap left and right node
+            let (left_node, right_node) = match (&actual_node.left, &actual_node.right) {
+                (Some(left), Some(right)) => Ok((left, right)),
+                (Some(left), None) => Ok((left, left)),
+                _ => Err(Error::new(ErrorKind::InvalidData, "invalid tree"))
+            }?;
+            
+            let remaining_nodes = (2 as u32).pow(depth as u32) as usize;
+            let move_left = leaf_number < remaining_nodes/2;
+            if move_left {
+                sibling_nodes.push((right_node.hash, Direction::Right));
+                actual_node = left_node;
+            } else {
+                sibling_nodes.push((left_node.hash, Direction::Left));
+                actual_node = right_node;
+                leaf_number = leaf_number - remaining_nodes/2;
+            }
+            depth = depth - 1;
+        }
+
+        Ok(MerkleProof { path: sibling_nodes })
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Direction {
+    Left,
+    Right,
+}
+
+#[derive(Debug)]
+pub struct MerkleProof {
+    path: Vec<(u64, Direction)>, // could extract (u64, bool) in a struct "SiblingNode"?
+}
+
+impl MerkleProof {
+    pub fn validate(&self, root_hash: u64, leaf_hash: u64) -> bool {
+        let mut actual = leaf_hash;
+        
+        // hash following the path until it reach root
+        for (sibling_hash, direction) in self.path.iter().rev() {
+            let concat = match direction {
+                Direction::Left => &[sibling_hash.to_le_bytes(), actual.to_le_bytes()].concat(),
+                Direction::Right => &[actual.to_le_bytes(), sibling_hash.to_le_bytes()].concat(),
+            };
+            
+            actual = hash(concat);
+        }
+        actual == root_hash
+    }
 }
 
 fn get_leaves(mut data: impl Read, leaf_size: usize) -> Result<Vec<MerkleNode>, Error> {
@@ -430,6 +490,57 @@ mod tests {
         assert!(tree.contains(&new_file_bytes[20480..20992]));
         assert!(!tree.contains(&new_file_bytes[100003..100512]));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_proof_case_1() -> Result<(), Error> {
+        let data: &[u8] = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let tree = MerkleTree::new(data, 2)?;
+        let proof = tree.generate_proof(0)?;
+        let leaf_hash = crate::hash(&[0x01, 0x02]);
+        let root_hash = tree.get_root_hash();
+        assert!(proof.validate(root_hash, leaf_hash));
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_proof_case_2() -> Result<(), Error> {
+        let data: &[u8] = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let tree = MerkleTree::new(data, 2)?;
+        let proof = tree.generate_proof(2)?;
+        let leaf_hash = crate::hash(&[0x05, 0x06]);
+        let root_hash = tree.get_root_hash();
+        assert!(proof.validate(root_hash, leaf_hash));
+        Ok(())
+    }
+
+
+    #[test]
+    fn test_proof_from_larger_data_kb() -> Result<(), Error> {
+        let file_size = 1024 * 100;
+        let mut file_bytes = vec![0u8; file_size];
+        let mut rng: rand::rngs::ThreadRng = rand::rngs::ThreadRng::default();
+        rng.fill_bytes(&mut file_bytes);
+        let tree = MerkleTree::new(file_bytes.as_slice(), 512)?;
+        let proof = tree.generate_proof(2)?;
+        let root_hash = tree.get_root_hash();
+        let leaf_hash = crate::hash(&file_bytes[1024..1536]);
+        assert!(proof.validate(root_hash, leaf_hash));
+        Ok(())
+    }
+
+    #[test]
+    fn test_proof_from_larger_data_mb() -> Result<(), Error> {
+        let file_size = 1024 * 10000;
+        let mut file_bytes = vec![0u8; file_size];
+        let mut rng: rand::rngs::ThreadRng = rand::rngs::ThreadRng::default();
+        rng.fill_bytes(&mut file_bytes);
+        let tree = MerkleTree::new(file_bytes.as_slice(), 512)?;
+        let proof = tree.generate_proof(20)?;
+        let root_hash = tree.get_root_hash();
+        let leaf_hash = crate::hash(&file_bytes[10240..10752]);
+        assert!(proof.validate(root_hash, leaf_hash));
         Ok(())
     }
 }

@@ -6,8 +6,7 @@ use rusty_merkle_tree::{MerkleTree, hash};
 fn main() -> Result<(), Error> {
     let data: &[u8] = &[0x01, 0x02, 0x03, 0x04];
     let mut reader = BufReader::new(data);
-    let mut tree = MerkleTree::new(&mut reader, 1)?;
-    println!("tree: {:#?}", tree);
+    let mut tree = MerkleTree::new(&mut reader, 2)?;
     println!(
         "tree contains 0x01, 0x02: {:?}",
         tree.contains(&[0x01, 0x02])
@@ -31,6 +30,13 @@ fn main() -> Result<(), Error> {
     reader = BufReader::new(data);
     tree = tree.append(&mut reader)?;
     println!("modified tree: {:#?}", tree);
-    assert!(tree.contains(&[0x06]));
+    println!("tree contains 0x05, 0x06?: {:?}", tree.contains(&[0x05, 0x06]));
+
+    let proof = tree.generate_proof(1)?;
+    println!("proof: {:#?}", &proof);
+    let root_hash = tree.get_root_hash();
+    let leaf_hash = hash(&[0x03, 0x04]);
+    assert!(proof.validate(root_hash, leaf_hash));
+
     Ok(())
 }
