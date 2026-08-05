@@ -1,4 +1,5 @@
 mod rusty_merkle_tree;
+mod rusty_merkle_tests;
 use std::io::{BufReader, Error};
 
 use rusty_merkle_tree::{MerkleTree, hash};
