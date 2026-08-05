@@ -1,5 +1,7 @@
-use std::{hash::{DefaultHasher, Hash, Hasher}, io::{Error, ErrorKind, Read}};
-
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    io::{Error, ErrorKind, Read},
+};
 
 pub fn hash(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -21,7 +23,7 @@ struct MerkleNode {
 }
 
 impl MerkleNode {
-    pub fn new_inner_node(left: MerkleNode, right: Option<MerkleNode>) -> MerkleNode {
+    fn new_inner_node(left: MerkleNode, right: Option<MerkleNode>) -> MerkleNode {
         let left_hash = left.hash;
         let right_hash = if let Some(right_node) = &right {
             right_node.hash
@@ -35,7 +37,7 @@ impl MerkleNode {
         }
     }
 
-    pub fn new_leaf(hash: u64) -> MerkleNode {
+    fn new_leaf(hash: u64) -> MerkleNode {
         MerkleNode {
             hash,
             left: None,
@@ -43,7 +45,7 @@ impl MerkleNode {
         }
     }
 
-    pub fn is_leaf(&self) -> bool {
+    fn is_leaf(&self) -> bool {
         self.left.is_none() && self.right.is_none()
     }
 }
@@ -208,6 +210,12 @@ impl MerkleTree {
     }
 
     pub fn generate_proof(&self, mut leaf_number: usize) -> Result<MerkleProof, Error> {
+        if leaf_number >= 2_u32.pow(self.depth() as u32) as usize {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "leaf number is out of bounds",
+            ));
+        }
         let mut depth = self.depth();
         let mut sibling_nodes = vec![];
         let mut actual_node = &self.root;
@@ -216,23 +224,25 @@ impl MerkleTree {
             let (left_node, right_node) = match (&actual_node.left, &actual_node.right) {
                 (Some(left), Some(right)) => Ok((left, right)),
                 (Some(left), None) => Ok((left, left)),
-                _ => Err(Error::new(ErrorKind::InvalidData, "invalid tree"))
+                _ => Err(Error::new(ErrorKind::InvalidData, "invalid tree")),
             }?;
-            
-            let remaining_nodes = (2 as u32).pow(depth as u32) as usize;
-            let move_left = leaf_number < remaining_nodes/2;
+
+            let remaining_nodes = 2_u32.pow(depth as u32) as usize;
+            let move_left = leaf_number < remaining_nodes / 2;
             if move_left {
                 sibling_nodes.push((right_node.hash, Direction::Right));
                 actual_node = left_node;
             } else {
                 sibling_nodes.push((left_node.hash, Direction::Left));
                 actual_node = right_node;
-                leaf_number = leaf_number - remaining_nodes/2;
+                leaf_number -= remaining_nodes / 2;
             }
-            depth = depth - 1;
+            depth -= 1;
         }
 
-        Ok(MerkleProof { path: sibling_nodes })
+        Ok(MerkleProof {
+            path: sibling_nodes,
+        })
     }
 }
 
@@ -250,14 +260,14 @@ pub struct MerkleProof {
 impl MerkleProof {
     pub fn validate(&self, root_hash: u64, leaf_hash: u64) -> bool {
         let mut actual = leaf_hash;
-        
+
         // hash following the path until it reach root
         for (sibling_hash, direction) in self.path.iter().rev() {
             let concat = match direction {
                 Direction::Left => &[sibling_hash.to_le_bytes(), actual.to_le_bytes()].concat(),
                 Direction::Right => &[actual.to_le_bytes(), sibling_hash.to_le_bytes()].concat(),
             };
-            
+
             actual = hash(concat);
         }
         actual == root_hash
@@ -287,8 +297,8 @@ fn get_leaves(mut data: impl Read, leaf_size: usize) -> Result<Vec<MerkleNode>, 
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufReader, Error};
     use rand::Rng;
+    use std::io::{BufReader, Error};
 
     use super::MerkleTree;
 
@@ -515,7 +525,6 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_proof_from_larger_data_kb() -> Result<(), Error> {
         let file_size = 1024 * 100;
@@ -541,6 +550,15 @@ mod tests {
         let root_hash = tree.get_root_hash();
         let leaf_hash = crate::hash(&file_bytes[10240..10752]);
         assert!(proof.validate(root_hash, leaf_hash));
+        Ok(())
+    }
+
+    #[test]
+    fn test_proof_invalid_leaf_number() -> Result<(), Error> {
+        let data: &[u8] = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let tree = MerkleTree::new(data, 2)?;
+        let result = tree.generate_proof(4);
+        assert!(result.is_err());
         Ok(())
     }
 }

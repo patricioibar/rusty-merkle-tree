@@ -30,10 +30,13 @@ fn main() -> Result<(), Error> {
     reader = BufReader::new(data);
     tree = tree.append(&mut reader)?;
     println!("modified tree: {:#?}", tree);
-    println!("tree contains 0x05, 0x06?: {:?}", tree.contains(&[0x05, 0x06]));
+    println!(
+        "tree contains 0x05, 0x06?: {:?}",
+        tree.contains(&[0x05, 0x06])
+    );
 
     let proof = tree.generate_proof(1)?;
-    println!("proof: {:#?}", &proof);
+    println!("proof: {:#?}", proof);
     let root_hash = tree.get_root_hash();
     let leaf_hash = hash(&[0x03, 0x04]);
     assert!(proof.validate(root_hash, leaf_hash));
